@@ -6,7 +6,7 @@ BaguetteGPT is a transformer-based language model trained entirely from scratch 
 
 - GPT-2 124M parameter architecture  
 - Trained from scratch (no pretrained weights)  
-- Dataset: [`krasaee/nietzsche`](https://huggingface.co/datasets/krasaee/nietzsche)  
+- Dataset: Hugging Face datasets, found in /data/loading_dataset.py 
 - **Tokenizer**: OpenAI's open-source Tiktoken (Byte-pair encoding Tokenizer)
 - **Training Framework**: PyTorch with Distributed Data Parallel (DDP) and SLURM
 - **Checkpointing**: Intermediate and final checkpoints saved during training
@@ -69,6 +69,10 @@ pip install -r requirements.txt
 ```
 
 ## 🚀 Usage
+
+Download and tokenize datasets: 
+
+python data/loading_dataset.py
 
 To train the model:
 
