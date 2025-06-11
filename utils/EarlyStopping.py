@@ -26,6 +26,7 @@ class EarlyStopping:
 
         if self.best_score is None:  #first call
             self.best_score = score
+            print("INFO(EarlyStopping): Model improved")
             self.save_checkpoint(model,checkpoint_path,optimizer, epochs, step,self.best_score)
         elif score < self.best_score + self.delta:  #no improvement
             self.counter += 1
@@ -37,6 +38,7 @@ class EarlyStopping:
                 self.early_stop = True
         else: #score > best_score indicates improvement
             self.best_score = score #i
+            print("INFO(EarlyStopping): Model improved")
             self.save_checkpoint(model,checkpoint_path,optimizer, epochs, step,self.best_score)
             self.counter = 0
 
@@ -54,7 +56,7 @@ class EarlyStopping:
         # rng seeds etc., if you wanted to more exactly resume training
         torch.save(checkpoint, checkpoint_path)
         if self.verbose:
-            print(f"INFO({dispatcher}):Improved model saved to {checkpoint_path}")
+            print(f"INFO({dispatcher}):Model saved to {checkpoint_path}")
 
 
     def loadModel(self, model:any, checkpoint_path:str, optimizer:any, mode:str)->any:

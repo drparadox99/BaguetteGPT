@@ -1,7 +1,7 @@
 
-from data.loading_dataset import DataLoaderLite,download_and_cache_dataset,split_dataset,save_tokenized_datasets,load_tokenized_datatsets
+from data.loading_dataset import DataLoaderLite,download_dataset_in_chunks, download_and_cache_dataset,split_dataset,save_tokenized_datasets,load_tokenized_datatsets
 from models.model import get_model
-from utils.utils import  enable_ddp, get_device,get_lr,destroy_ddp,evaluate_running_time
+from utils.utils import  enable_ddp, get_device,get_lr,destroy_ddp,evaluate_running_time,is_bfloat16_supported
 from utils.EarlyStopping import  EarlyStopping
 import torch
 from torch.nn import functional as F
@@ -12,7 +12,15 @@ import tiktoken
 
 #useful variables
 # file_path = "data/nietzsche_shards/nietzsche_train_000000.npy"  # data path
-file_path = "data/nietzsche_shards/nietzsche"
+#remo = "data/nietzsche_shards/nietzsche"
+# remote_data_path = "krasaee/nietzsche/" #"data/nietzsche_shards/nietzsche"
+remote_data_path = "data/Kant1/French_Wikipedia_articles/"
+shard_size = int(1e6) #size of each shard file and its buffer
+#samples (num_lines) to fetch per chunk from streaming, resulting tokens must be < than shard_size
+chunck_size = 100 
+num_shards_allowed = 5
+# #remote_name = "sample-10BT"
+
 device = get_device()  #get device
 compiled_model = False
 sample_file_="logs/sample_log.txt"
@@ -21,23 +29,42 @@ val_log_file = "logs/val_log.txt"
 checkpoint_path = "checkpoints/checkpoint.pt" #f"model_{step:05d}.pt"
 load_checkpoint = False  #upload checkpoint model
 save_checkpoint = False
+is_bfloat16_supported = is_bfloat16_supported(device)
+enabled_monitoring = False
+
 
 #training hyperparameters
 B, T = 4, 32 # Batch and sequence length
 num_return_sequences, sentences_length = 5, 7
-epochs = 200
+max_steps = 30
 max_length = 50
 weight_decay=0.1
 learning_rate=6e-4
-total_batch_size = 16384 #(2**11) # 2**19=524288, ~0.5M, in number of tokens in a single batch
-val_occurrence = 2 #10
-sampling_occurrence = 10
-checkpoint_occurrence = 2 #30
+total_batch_size = 524288 #16384 #(2**11) # 2**19=524288, ~0.5M, in number of tokens in a single batch  #total_batch_size= B*T*number_of_GPU
+val_occurrence = 20 #10
+sampling_occurrence = 20
+monitoring_occurrence = 2 #30
 chatGPT_name = "PhiloGPT"
 
+
+
+# #use for training
+# hp_trian = {
+#     'B': 64, 
+#     'T': 1024, 
+#     'total_batch_size': 131072,  #B * T * num_GPUs
+#     'max_steps': 5*13261, # 13261 = 1epoch: max_steps is ~1 epoch,data is 1.738.268.900 tokens, total_batch_size 131072 tokens #~1.8B/131072=110 626
+#     'val_occurrence' : 100,
+#     'sampling_occurrence' : 100,
+#     'monitoring_occurrence': 100
+# }
+
+# B,T,total_batch_size, max_steps, val_occurrence, sampling_occurrence, monitoring_occurrence = hp_trian.values()
+
+
 #early stopping
-patience = 10
-delta = 0.0
+patience = 30
+delta = 0.2
 verbose = True
 early_stopping = EarlyStopping(patience=patience, delta=delta, device=device, verbose=verbose)
 
@@ -51,26 +78,28 @@ datasets_splits = {
 
 
 #datasets repos
-hf_repos = {
-    'nietzsche': 'krasaee/nietzsche',
-    'fr_wiki' : 'Kant1/French_Wikipedia_articles',
-    'fr_wikbooks': 'Kant1/French_Wikibooks_articles',
-    'fr_wikiversity' :'Kant1/French_Wikiversity_articles' ,
-    'ft_wiki_fineTuning' : 'Sabrina1763/wikipedia_french',
-    'fr_wiki_trivia_fineTuning': 'AIffl/french_trivia_qa_with_wikicontext'
-}
+# hf_repos = {
+#     'nietzsche': 'krasaee/nietzsche',
+#     'fr_wiki' : 'Kant1/French_Wikipedia_articles',
+#     'fr_wikbooks': 'Kant1/French_Wikibooks_articles',
+#     'fr_wikiversity' :'Kant1/French_Wikiversity_articles' ,
+#     'ft_wiki_fineTuning' : 'Sabrina1763/wikipedia_french',
+#     'fr_wiki_trivia_fineTuning': 'AIffl/french_trivia_qa_with_wikicontext'
+# }
 
 ##Prepare datasets (training, validation and testing)
 
 #get & cache raw text from hggf
 # dataset = download_and_cache_dataset(hf_repos['nietzsche'])
 # datasets = split_dataset(dataset,  datasets_splits['train_set'],datasets_splits['val_set'], datasets_splits['test_set'])
-
-#save datasets
+#save datasets (train, val and testing)
 # save_tokenized_datasets(datasets, enc,file_path)
-
 #load datasets
-tokenized_datasets = load_tokenized_datatsets(file_path, datasets_splits)
+#tokenized_datasets = load_tokenized_datatsets(file_path, datasets_splits)
+
+
+#download, tokenize and save as shards
+#download_dataset_in_chunks(remote_data_path,shard_size,chunck_size,enc)
 
 #prepare model
 model = get_model(pretrained=False)
@@ -87,12 +116,17 @@ model = torch.compile(model) if compiled_model else model
 
 #enable parallel data distributed if available # use torchrun --standalone --nproc_per_node=6 myChatGPT2.py
 model, ddp, ddp_rank, ddp_local_rank,ddp_world_size,master_process   = enable_ddp(model,device)
+
 chatGPT_model = model.module if ddp else model #get model if ddp enabled
+print(f"GPU process: rank:{ddp_rank}, ddp_local_rank:{ddp_local_rank} ddp_word_size:{ddp_world_size} master_process:{master_process}")
+
+print("Dataset shards used: ",remote_data_path )
 
 #prepare dataloaders
-train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,tokenized_dataset=tokenized_datasets['train_set'])
-val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,tokenized_dataset=tokenized_datasets['val_set'])
-test_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,tokenized_dataset=tokenized_datasets['test_set'])
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,remote_data_path=remote_data_path,split='train_set', master_process=master_process )
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,remote_data_path=remote_data_path,split='val_set', master_process=master_process)
+test_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,remote_data_path=remote_data_path,split='val_set', master_process=master_process)
+#test_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank,num_processes=ddp_world_size,tokenized_dataset=tokenized_datasets['test_set'])
 
 #pick random sentene in testing data
 random_sentence = test_loader.draw_random_sequences(num_return_sequences,sentences_length, enc)
@@ -114,12 +148,12 @@ if master_process:
 
 
 ftime_s = time.time()
-for step in range(epochs):
+for step in range(max_steps):
     t0 = time.time() #in seconds
-    last_epoch = (step == epochs - 1)
+    last_step = (step == max_steps - 1)
 
     # ----------------------------------------validation loop----------------------------------------------------
-    if step % val_occurrence == 0 and step != 0 or last_epoch:
+    if step % val_occurrence == 0 and step != 0 or last_step:
         model.eval()
         val_loader.reset()
         with torch.no_grad():
@@ -127,9 +161,12 @@ for step in range(epochs):
             val_loss_steps = 20
             for _ in range(val_loss_steps):
                 x, y = val_loader.next_batch()
-                x, y = x.to(device), y.to(device)
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
-                    logits, loss = model(x, y)
+                x, y = x.to(device), y.to(device)              
+                if is_bfloat16_supported:
+                    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                        logits, loss = model(x, y)
+                else:      
+                    logits, loss = model(x, y)                
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
         if ddp:
@@ -137,19 +174,19 @@ for step in range(epochs):
         if master_process:
             print(f"INFO(Validation loss): validation loss: {val_loss_accum.item():.4f}")
             with open(val_log_file, "a") as f:
-                f.write(f"step: {step}, val_loss: {val_loss_accum.item():.4f}\n")
-            if step > 0 and (step % checkpoint_occurrence == 0 or last_epoch): #to remove
-                early_stopping(chatGPT_model,checkpoint_path,optimizer, epochs, step,val_loss_accum)
-        #early stopping
+                f.write(f"Step: {step}, val_loss: {val_loss_accum.item():.4f}\n")
+            if  enabled_monitoring:
+                if step > 0 and (step % monitoring_occurrence == 0 or last_step): #to remove
+                    early_stopping(chatGPT_model,checkpoint_path,optimizer, step, step,val_loss_accum)
             if save_checkpoint:
-                early_stopping(chatGPT_model,checkpoint_path,optimizer, epochs, step,val_loss_accum)
+                early_stopping.save_checkpoint(chatGPT_model,checkpoint_path,optimizer, step, step,val_loss_accum,'Main')
                 if early_stopping.early_stop:
                     break
 
 
     # ----------------------------------------sampling loop----------------------------------------------------
     # once in a while generate from the model (except step 0, which is noise)
-    if ((step > 0 and step % sampling_occurrence == 0) or last_epoch) and (not compiled_model):
+    if ((step > 0 and step % sampling_occurrence == 0) or last_step) and (not compiled_model):
         model.eval()
         max_length = 32
         tokens = enc.encode_ordinary(random_sentence)
@@ -161,8 +198,11 @@ for step in range(epochs):
         while xgen.size(1) < max_length:
             # forward the model to get the logits
             with torch.no_grad():
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
-                    logits, loss = model(xgen) # (B, T, vocab_size)
+                if is_bfloat16_supported:
+                    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                        logits, loss = model(xgen) # (B, T, vocab_size)
+                else:
+                    logits, loss = model(xgen) # (B, T, vocab_size)                    
                 # take the logits at the last position
                 logits = logits[:, -1, :] # (B, vocab_size)
                 # get the probabilities
@@ -205,8 +245,11 @@ for step in range(epochs):
         if device == 'cpu':
             logits, loss = model(x, y)
         else:
-            with torch.autocast(device_type=device, dtype=torch.bfloat16): #drop to float16
-                logits, loss = model(x,y)
+            if is_bfloat16_supported:
+                with torch.autocast(device_type=device, dtype=torch.bfloat16): #drop to float16
+                    logits, loss = model(x,y)
+            else: 
+                logits, loss = model(x,y)            
         loss = loss / grad_accum_steps #get mean of gradients, due to gradient accumulation implementation
         loss_accum += loss.detach() #get overall loss across the loss_accum
         loss.backward()

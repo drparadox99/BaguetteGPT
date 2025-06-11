@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
 import inspect
-
+#from models.MOE import SparseMoE
 
 class CausalSelfAttention(nn.Module):
 
@@ -60,12 +60,16 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
-
+        # self.experts = nn.ModuleList([MLP(config) for _ in range(config.num_experts)])
+        # config.experts = self.experts
+        # self.moe = SparseMoE(config)
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
+        # x = x + self.moe(self.ln_2(x))
         return x
 
+        
 @dataclass
 class GPTConfig:
     block_size: int = 1024 # max sequence length (max number of tokens processed in a single input)
@@ -73,19 +77,23 @@ class GPTConfig:
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
     n_embd: int = 768 # embedding dimension
-
+    top_k:int = 2
+    num_experts:int = 4
+    top_k:int = 2
+    dropout_rate:float = 0.1
 
 class GPT(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.config = config
-
+        self.config = config 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd),
+
+            # h = nn.ModuleList([SparseMoE(config) for _ in range(config.num_experts)]),
+            ln_f = nn.LayerNorm(config.n_embd)
         ))
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -118,6 +126,8 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (B, T, n_embd)
         x = tok_emb + pos_emb
         # forward the blocks of the transformer
+        #b block  torch.Size([4, 32, 768])
+        #a block  torch.Size([4, 32, 768])
         for block in self.transformer.h:
             x = block(x)
         # forward the final layernorm and the classifier

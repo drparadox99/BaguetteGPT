@@ -7,23 +7,60 @@ import os
 import torch.distributed as dist
 
 
+# def enable_ddp(model: any, device: str) -> tuple[DDP, bool, int, int, int, bool]:
+#     print(f"[Rank {os.environ.get('RANK', '?')}] LOCAL_RANK={os.environ.get('LOCAL_RANK', '?')} - Available devices: {torch.cuda.device_count()}")
 
+#     ddp = int(os.environ.get('RANK', -1)) != -1
+#     if ddp:
+#         assert torch.cuda.is_available(), "CUDA required for DDP"
+#         init_process_group(backend='nccl')
+
+#         ddp_rank = int(os.environ['RANK'])
+#         ddp_local_rank = int(os.environ['LOCAL_RANK'])
+#         ddp_world_size = int(os.environ['WORLD_SIZE'])
+
+#         device = f'cuda:{ddp_local_rank}'
+#         torch.cuda.set_device(ddp_local_rank)
+#         model = model.to(device)
+
+#         master_process = ddp_rank == 0
+#         model = DDP(model, device_ids=[ddp_local_rank])  # ✅ FIXED
+
+#         if master_process:
+#             print("Master process : DDP enabled")
+#     else:
+#         ddp_rank = 0
+#         ddp_local_rank = 0
+#         ddp_world_size = 1
+#         master_process = True
+#         print("INFO: DDP is not enabled")
+#         model = model.to(device)
+
+#     return model, ddp, ddp_rank, ddp_local_rank, ddp_world_size, master_process
 
 #enables parallel processing if available
 def enable_ddp(model:any,device:str)-> tuple[DistributedDataParallel, bool, int, int, int, bool]:
 	#set up DDP (distributed data parallel).
 	# torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
+	print(f"[Rank {os.environ.get('RANK', '?')}] LOCAL_RANK={os.environ.get('LOCAL_RANK', '?')} - Available devices: {torch.cuda.device_count()} \n")
+
 	ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
 	if ddp:
 		# use of DDP atm demands CUDA, we set the device appropriately according to rank
-		assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
-		init_process_group(backend='nccl')
+		assert torch.cuda.is_available(), "CUDA required for DDP"
+		init_process_group(backend='nccl') #enable GPU-to-GPU communication
+		
 		ddp_rank = int(os.environ['RANK']) #process rank/identifier (rank/identifier of a GPU)
-		ddp_local_rank = int(os.environ['LOCAL_RANK']) #rank of the GPU in a single node (used in a multi node setting )
+		ddp_local_rank = int(os.environ['LOCAL_RANK']) #rank of the GPU in a single node 
 		ddp_world_size = int(os.environ['WORLD_SIZE']) #number of processes to run in parallel (8 GPUs)
-		device = f'cuda:{ddp_local_rank}'
-		torch.cuda.set_device(device)
+
+		device_ = f'cuda:{ddp_local_rank}'
+		torch.cuda.set_device(ddp_local_rank)
+		model = model.to(device_) #multiple GPUs: device= "cuda:0", "cuda:1" but device variable remains device="cuda"
 		master_process = ddp_rank == 0 # set first process(rank0) to masterprocess for logging, checkpointing etc.
+		model = DDP(model, device_ids=[int(os.environ['LOCAL_RANK'])]) #DDP wrapper
+		if master_process:
+				print("Master process : DDP enabled")
 	else: #single GPU training
 		# vanilla, non-DDP run
 		ddp_rank = 0
@@ -31,10 +68,7 @@ def enable_ddp(model:any,device:str)-> tuple[DistributedDataParallel, bool, int,
 		ddp_world_size = 1
 		master_process = True
 		print("INFO: DDP is not enabled")
-	if ddp:
-		model = DDP(model, device_ids=[ddp_local_rank]) #DDP wrapper
-		if master_process:
-			print("Master process : DDP enabled")
+		model = model.to(device)
 
 	return model, ddp, ddp_rank, ddp_local_rank, ddp_world_size, master_process
 
@@ -83,14 +117,12 @@ def evaluate_running_time(epochs:int,time_per_epoch:float)->None:
 # def get_checkpoint_path(step:str)->str:
 # 	return f'checkpoints/checkpoint_{step:05d}.pt'
 
+# Check if bfloat16 is supported on current device
+def is_bfloat16_supported(device_type):
+    if device_type == 'cuda':
+        # bfloat16 supported only on Ampere GPUs (compute capability >= 8.0)
+        # You can infer it using torch.cuda.get_device_capability
+        major, _ = torch.cuda.get_device_capability() if torch.cuda.is_available() else (0, 0)
+        return (major >= 8)
 
-def ealy_stopping():
-	"""
-   Args:
-	   patience (int): How many epochs to wait after last improvement.
-	   verbose (bool): If True, prints a message for each improvement.
-	   delta (float): Minimum change to qualify as improvement.
-	   save_path (str): Path to save the best model.
-	   mode (str): 'min' for loss, 'max' for accuracy, etc.
-	"""
 
