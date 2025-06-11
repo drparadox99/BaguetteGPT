@@ -104,7 +104,7 @@ Key libraries:
 ## 🤝 Acknowledgments
 
 - Inspired by Andrej Karpathy's build nanoGPT project [Contributor's GitHub Page](https://github.com/karpathy/build-nanogpt.git) 
-- Dataset by [@krasaee](https://huggingface.co/krasaee)  
+- Dataset by [(https://huggingface.co/krasaee)  
 
 ## 📖 Licence 
 
