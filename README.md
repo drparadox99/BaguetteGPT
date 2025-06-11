@@ -1,10 +1,6 @@
 # BaguetteGPT
 
-An implementation and from-scratch training of a GPT-2-like model (124M parameters) on the complete writings of **Friedrich Nietzsche**, using the `krasaee/nietzsche` dataset from Hugging Face.
-
-## 🧠 Overview
-
-This project reproduces a ChatGPT2-style architecture (small GPT-2) and trains it entirely from scratch on Nietzsche’s corpus. The result is a model that generates text with a distinct philosophical and poetic tone, imitating Nietzsche's style.
+BaguetteGPT is a transformer-based language model trained entirely from scratch on large-scale French-language datasets from Hugging Face, inspired by the GPT-2 architecture (124M parameters). This project demonstrates how to build a performant generative model for French using modern deep learning techniques, advanced optimization strategies, and distributed training at scale.
 
 ## 📜 Highlights
 
