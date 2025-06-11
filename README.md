@@ -1,4 +1,4 @@
-# Nietzsche-GPT2
+# BaguetteGPT
 
 An implementation and from-scratch training of a GPT-2-like model (124M parameters) on the complete writings of **Friedrich Nietzsche**, using the `krasaee/nietzsche` dataset from Hugging Face.
 
